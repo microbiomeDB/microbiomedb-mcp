@@ -1,0 +1,29 @@
+# Local dev/test environment for the microbiomedb-mcp Python client + tests.
+#
+# This is for HOST-side development only (running scripts/smoke.py, the
+# pytest suite, etc). The mcp service container has its own Python install
+# baked in via docker/mcp/Dockerfile and pyproject.toml, so this env does
+# NOT need to match it byte-for-byte; it just needs the MCP SDK + pyRserve
+# + pytest so we can drive the running container from outside.
+#
+# Create:
+#   conda env create -f environment.yml
+# Activate:
+#   conda activate microbiomedb-mcp
+# Update later:
+#   conda env update -f environment.yml --prune
+
+name: microbiomedb-mcp
+channels:
+  - conda-forge
+dependencies:
+  - python=3.12
+  - pip
+  - pip:
+      # Same client SDK the smoke test imports.
+      - mcp>=1.2.0
+      # Used by the unit tests in tests/python.
+      - pyRserve>=1.0.4
+      - pytest>=8.0
+      - anyio>=4.0
+      - pydantic>=2.0

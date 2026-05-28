@@ -1,0 +1,44 @@
+# Caddyfile for microbiomedb-mcp
+# - Terminates TLS (uses Caddy's local CA when MCP_PUBLIC_HOST=localhost,
+#   ACME otherwise).
+# - Enforces a static bearer token via the Authorization header.
+# - Reverse-proxies to the mcp service on the internal compose network.
+#
+# Bearer-token auth is intentionally simple. For multi-user or revocable
+# tokens, replace the @authorized matcher with something backed by a real
+# auth provider (e.g. forward_auth to an OIDC sidecar).
+
+{
+	# Capture errors centrally so we can return JSON-RPC-ish bodies.
+	admin off
+}
+
+{$MCP_PUBLIC_HOST}:443, {$MCP_PUBLIC_HOST}:80 {
+	encode zstd gzip
+
+	@authorized header Authorization "Bearer {$MCP_BEARER_TOKEN}"
+
+	# Health endpoint is unauthenticated so external uptime checks work.
+	handle /healthz {
+		reverse_proxy mcp:{$MCP_INTERNAL_PORT}
+	}
+
+	handle {
+		# Refuse anything without a valid bearer token.
+		@unauthorized not header Authorization "Bearer {$MCP_BEARER_TOKEN}"
+		respond @unauthorized "unauthorized" 401 {
+			close
+		}
+
+		# Defense-in-depth: tell the mcp service the request was authed.
+		reverse_proxy mcp:{$MCP_INTERNAL_PORT} {
+			header_up X-Forwarded-Auth "ok"
+			# Streamable-HTTP MCP transport uses long-lived requests; bump
+			# read/write timeouts so SSE-style streams don't get cut.
+			transport http {
+				read_timeout 1h
+				write_timeout 1h
+			}
+		}
+	}
+}
