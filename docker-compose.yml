@@ -1,0 +1,99 @@
+name: microbiomedb-mcp
+
+services:
+  rserve:
+    build:
+      context: ./docker/rserve
+      args:
+        # Pinned in the Dockerfile; override here for one-off rebuilds
+        # against a different MicrobiomeDB / microbiomeData release.
+        MICROBIOMEDB_REF: ${MICROBIOMEDB_REF:-v1.1.2}
+        # Pinned to a post-v1.0.7 commit because v1.0.7 still references
+        # the now-removed veupathUtils package (see Dockerfile note).
+        MICROBIOMEDATA_REF: ${MICROBIOMEDATA_REF:-ced9da6f012842596ffa411b473e2781f296f384}
+        # Set to "false" to skip the (large) microbiomeData install. The
+        # runtime gates curated-dataset tools on its presence, so the
+        # rest of the stack still works for user-import workflows.
+        INSTALL_MICROBIOMEDATA: ${INSTALL_MICROBIOMEDATA:-true}
+        # Optional GitHub PAT to dodge unauthenticated 60 req/hr rate
+        # limit during big rebuilds. Leave blank in CI.
+        GITHUB_PAT: ${GITHUB_PAT:-}
+    image: microbiomedb-mcp/rserve:latest
+    # Internal-only: do NOT publish 6311 to the host.
+    expose:
+      - "6311"
+    networks:
+      - internal
+    volumes:
+      - uploads:/srv/uploads
+    healthcheck:
+      test: ["CMD-SHELL", "bash -c 'cat < /dev/null > /dev/tcp/127.0.0.1/6311'"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 60s
+    restart: unless-stopped
+
+  mcp:
+    build:
+      context: .
+      dockerfile: docker/mcp/Dockerfile
+    image: microbiomedb-mcp/mcp:latest
+    depends_on:
+      rserve:
+        condition: service_healthy
+    environment:
+      RSERVE_HOST: ${RSERVE_HOST:-rserve}
+      RSERVE_PORT: ${RSERVE_PORT:-6311}
+      MCP_BEARER_TOKEN: ${MCP_BEARER_TOKEN}
+      MCP_INTERNAL_PORT: ${MCP_INTERNAL_PORT:-8080}
+      MCP_SESSION_IDLE_TIMEOUT: ${MCP_SESSION_IDLE_TIMEOUT:-3600}
+      MCP_MAX_SESSIONS: ${MCP_MAX_SESSIONS:-16}
+      MCP_MAX_JOBS_PER_SESSION: ${MCP_MAX_JOBS_PER_SESSION:-2}
+      MCP_MAX_JOBS_GLOBAL: ${MCP_MAX_JOBS_GLOBAL:-8}
+      MCP_LOG_LEVEL: ${MCP_LOG_LEVEL:-INFO}
+      MCP_ENABLE_DNS_REBINDING_PROTECTION: ${MCP_ENABLE_DNS_REBINDING_PROTECTION:-false}
+      MCP_ALLOWED_HOSTS: ${MCP_ALLOWED_HOSTS:-}
+      MCP_ALLOWED_ORIGINS: ${MCP_ALLOWED_ORIGINS:-}
+      UPLOADS_DIR: /srv/uploads
+    expose:
+      - "${MCP_INTERNAL_PORT:-8080}"
+    networks:
+      - internal
+    volumes:
+      - uploads:/srv/uploads
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:${MCP_INTERNAL_PORT:-8080}/healthz || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    restart: unless-stopped
+
+  proxy:
+    image: caddy:2-alpine
+    depends_on:
+      - mcp
+    environment:
+      MCP_PUBLIC_HOST: ${MCP_PUBLIC_HOST:-localhost}
+      MCP_BEARER_TOKEN: ${MCP_BEARER_TOKEN}
+      MCP_INTERNAL_PORT: ${MCP_INTERNAL_PORT:-8080}
+    ports:
+      - "443:443"
+      - "80:80"
+    networks:
+      - internal
+    volumes:
+      - ./docker/proxy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    restart: unless-stopped
+
+networks:
+  internal:
+    driver: bridge
+
+volumes:
+  uploads:
+  caddy_data:
+  caddy_config:
