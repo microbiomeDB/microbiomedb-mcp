@@ -206,3 +206,7 @@ python scripts/smoke.py
 * `microbiomeData`'s curated-dataset list is exposed lazily via R's
   LazyData mechanism. If you update `microbiomeData`, rebuild the rserve
   image so the new datasets show up.
+* The bearer token is a **single shared secret**. In practice this makes
+  the server best suited to small teams on an internal network. Don't
+  point it at arbitrary internet users without replacing Caddy's static
+  token check with a real identity provider.
